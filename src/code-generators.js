@@ -61,7 +61,11 @@ const ArrayExpression = (next, node) =>
 
 const RegExpLiteral = (next, node) =>
   `#"${regexFlags(node.flags)}${node.pattern}"`;
+// ==========================================
 
+const AwaitExpression = (next, node) => `(js/await ${next(node.child)})`;
+
+// ==========================================
 module.exports = {
   program,
   symbol,
@@ -81,5 +85,6 @@ module.exports = {
   ObjectProperty,
   ObjectExpression,
   ArrayExpression,
-  RegExpLiteral
+  RegExpLiteral,
+  AwaitExpression
 };

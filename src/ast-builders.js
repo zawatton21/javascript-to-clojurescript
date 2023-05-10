@@ -19,10 +19,16 @@ const FN = (next, id, params, body, opts = { isImplicitDo: true }) => {
   } else {
     l.children.push(bodies);
   }
+
+  if (opts.isAsync) {
+    const goBlock = t.list([t.symbol("cljs.core.async/go"), l]);
+    return goBlock;
+  }
+
   return l;
 };
 
-const DEFN = (next, id, params, body) => {
+const DEFN = (next, id, params, body, opts = {}) => {
   const bodies = next(body, { isImplicitDo: true });
 
   const l = t.list([t.symbol(t.DEFN), next(id), t.vector(params.map(next))]);
@@ -32,8 +38,16 @@ const DEFN = (next, id, params, body) => {
   } else {
     l.children.push(bodies);
   }
+
+  if (opts.isAsync) {
+    const goBlock = t.list([t.symbol("cljs.core.async/go"), l]);
+    return goBlock;
+  }
+
   return l;
 };
+
+
 
 const FN_CALL = (next, fn, args = []) => t.list([fn, ...args.map(next)]);
 

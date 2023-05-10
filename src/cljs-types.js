@@ -100,6 +100,13 @@ const MapEntry = (key, value) => ({
 
 // ============================
 
+const AwaitExpression = child => ({
+  type: "AwaitExpression",
+  child
+});
+
+// ============================
+
 const DEF = "def";
 const DEFN = "defn";
 const FN = "fn";
@@ -125,6 +132,7 @@ module.exports = {
   EmptyStatement,
   BreakStatement,
   RegExpLiteral,
+  AwaitExpression,
 
   ForOfStatement,
 

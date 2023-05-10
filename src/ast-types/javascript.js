@@ -85,7 +85,13 @@ module.exports = [
   "InterfaceDeclaration",
   "Noop",
   "ParenthesizedExpression",
+  // 追加
+  "AsyncFunctionDeclaration",
+  "AsyncFunctionExpression",
+  "AsyncArrowFunctionExpression",
   "AwaitExpression",
+  "UpdateExpression",
+  "ForStatement",
   "ForAwaitStatement",
   "BindExpression",
   "Import",

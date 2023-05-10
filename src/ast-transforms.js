@@ -29,15 +29,16 @@ const File = (next, ast, opts) => next(ast.program);
 const Program = (next, ast, opts) => t.program(ast.body.map(next));
 const ExpressionStatement = (next, ast, opts) => next(ast.expression);
 
-const BinaryExpression = (next, ast, opts) => {
+const BinaryExpression = (next, ast) => {
   const { operator, left, right } = ast;
-
-  return t.list([
-    t.symbol(utils.normalizeOperator(operator)),
-    next(left),
-    next(right)
-  ]);
+  const cljsOp = utils.getBinaryOp(operator);
+  if (cljsOp) {
+    return t.list([t.symbol(cljsOp), next(left), next(right)]);
+  } else {
+    throw new Error(`Unsupported binary operator: ${operator}`);
+  }
 };
+
 
 const DeleteStatement = (next, ast, opts) => {
   const { argument } = ast;
@@ -90,7 +91,18 @@ const Identifier = (next, ast, opts) => {
 
 const NumericLiteral = (next, ast, opts) => t.NumericLiteral(ast.extra.raw);
 
-const VariableDeclaration = (next, ast, opts) => next(ast.declarations[0]);
+//const VariableDeclaration = (next, ast, opts) => next(ast.declarations[0]);
+const VariableDeclaration = (next, ast, opts) => {
+  if (ast.declarations.length !== 1) {
+    throw new Error("VariableDeclaration: Multiple variable declarations are not supported");
+  }
+
+  const id = next(ast.declarations[0].id);
+  const init = ast.declarations[0].init ? next(ast.declarations[0].init) : t.NumericLiteral(0);
+  return t.list([t.symbol("def"), id, t.list([t.symbol("atom"), init])]);
+};
+
+
 
 const VariableDeclarator = (next, ast, opts) => {
   const { id, init } = ast;
@@ -107,27 +119,69 @@ const VariableDeclarator = (next, ast, opts) => {
   return DEF(next(id), next(init, { isVar: true }));
 };
 
+// asyncを変換処理するためにfunction修正
 const FunctionDeclaration = (next, ast, opts) => {
   const { id, params, body } = ast;
-  return DEFN(next, id, params, body);
-};
+  const isAsync = ast.async;
 
-const FunctionExpression = (next, ast, opts) => {
-  const { id, params, body } = ast;
-
-  if (id === null || opts.isVar) {
-    return FN(next, id, params, body);
+  if (isAsync) {
+    const goBlockBody = bt.blockStatement([
+      bt.expressionStatement(
+        bt.callExpression(bt.identifier("go"), [bt.arrowFunctionExpression([], body)])
+      ),
+    ]);
+    return DEFN(next, id, params, goBlockBody);
   } else {
     return DEFN(next, id, params, body);
   }
 };
+
+
+const FunctionExpression = (next, ast, opts) => {
+  const { id, params, body } = ast;
+  const isAsync = ast.async;
+
+  if (isAsync) {
+    const goBlockBody = bt.blockStatement([
+      bt.expressionStatement(
+        bt.callExpression(bt.identifier("go"), [bt.arrowFunctionExpression([], body)])
+      ),
+    ]);
+
+    if (id === null || opts.isVar) {
+      return FN(next, id, params, goBlockBody);
+    } else {
+      return DEFN(next, id, params, goBlockBody);
+    }
+  } else {
+    if (id === null || opts.isVar) {
+      return FN(next, id, params, body);
+    } else {
+      return DEFN(next, id, params, body);
+    }
+  }
+};
+
 
 const ArrowFunctionExpression = (next, ast, opts) => {
   const { params, body } = ast;
   return FN(next, null, params, body, { isImplicitDo: !ast.expression });
 };
 
-const ReturnStatement = (next, ast, opts) => next(ast.argument);
+// 下記だとast.argument が null であることを考慮していない。
+// const ReturnStatement = (next, ast, opts) => next(ast.argument);
+
+const ReturnStatement = (next, ast, opts) => {
+  const { argument } = ast;
+  if (argument === null) {
+    // 空を返すreturnの変換をスキップ為コメントアウト
+    return t.list([t.symbol("return"), t.symbol("nil")]);
+    //return t.list([]);
+    return null;
+  } else {
+    return t.list([t.symbol("return"), next(argument)]);
+  }
+};
 
 const CallExpression = (next, ast, opts) => {
   const { callee } = ast;
@@ -260,6 +314,14 @@ const ObjectProperty = (next, ast, opts) =>
 
 const ThisExpression = (next, ast, opts) => THIS_AS("this", []);
 
+// デフォルト引数に対応できるようにする
+const AssignmentPattern = (next, ast, opts) => {
+  const left = next(ast.left);
+  const right = next(ast.right);
+  return t.list([t.symbol("or"), left, right]);
+};
+
+/*
 const AssignmentExpression = (next, ast, opts) => {
   if (bt.isMemberExpression(ast.left) && ast.left.computed) {
     return t.list([
@@ -281,6 +343,22 @@ const AssignmentExpression = (next, ast, opts) => {
   }
   return expr;
 };
+*/
+const AssignmentExpression = (next, ast, opts) => {
+  const { operator, left, right } = ast;
+  const leftExpr = next(left);
+  const rightExpr = next(right);
+
+  if (operator === '=') {
+    return t.list([t.symbol("swap!"), leftExpr, t.symbol("fn"), t.vector([]), rightExpr]);
+  } else if (operator === '+=') {
+    return t.list([t.symbol("swap!"), leftExpr, t.symbol("fn"), t.vector([]), t.list([t.symbol('+'), t.list([t.symbol('deref'), leftExpr]), rightExpr])]);
+  } else {
+    throw new Error(`AssignmentExpression: Unsupported operator "${operator}"`);
+  }
+};
+
+
 
 const NewExpression = (next, ast, opts) => t.list([
   t.symbol("new"),
@@ -518,6 +596,7 @@ const JSXIdentifier = (next, ast, opts) =>
 const JSXText = (next, ast, opts) =>
   ast.value.trim() !== "" ? t.StringLiteral(ast.value) : t.EmptyStatement();
 
+/*
 const ForOfStatement = (next, ast, opts) => {
   const { left, right, body } = ast;
 
@@ -535,6 +614,151 @@ const ForOfStatement = (next, ast, opts) => {
     next(body)
   ]);
 }
+*/
+
+// asyncの変換プロセスを追加
+const AsyncFunctionDeclaration = (next, ast, opts) => {
+  const { id, params, body } = ast;
+  const fn = DEFN(next, id, params, body, { isChannel: true });
+  return t.list([t.symbol("cljs.core.async/go"), fn]);
+};
+
+const AsyncFunctionExpression = (next, ast, opts) => {
+  const { id, params, body } = ast;
+
+  if (id === null || opts.isVar) {
+    const fn = FN(next, id, params, body, { isChannel: true });
+    return t.list([t.symbol("cljs.core.async/go"), fn]);
+  } else {
+    const fn = DEFN(next, id, params, body, { isChannel: true });
+    return t.list([t.symbol("cljs.core.async/go"), fn]);
+  }
+};
+
+const AsyncArrowFunctionExpression = (next, ast, opts) => {
+  const { params, body } = ast;
+  const fn = FN(next, null, params, body, { isImplicitDo: !ast.expression, isChannel: true });
+  return t.list([t.symbol("cljs.core.async/go"), fn]);
+};
+
+
+// awaitの変換プロセスを追加
+const AwaitExpression = (next, ast, opts) => {
+  const { argument } = ast;
+  return t.list([t.symbol("<!"), next(argument)]);
+};
+
+// continue文の変換処理
+const ContinueStatement = (next, ast, opts) => {
+  if (!opts.inFor) {
+    throw new Error("ContinueStatement is not supported outside of a loop");
+  }
+  return t.list([t.symbol("recur"), opts.continueLabel]);
+};
+
+
+// For文処理
+const ForStatement = (next, ast, opts) => {
+  const { init, test, update, body } = ast;
+
+  if (init.type === "VariableDeclaration" && init.declarations.length > 1) {
+    throw new Error("ForStatement: Multiple variable declarations are not supported");
+  }
+
+  const binding = next(init.declarations[0].id);
+  const initValue = next(init.declarations[0].init);
+  const testExpr = next(test);
+  const bodyExpr = next(body);
+
+  return t.list([
+    t.symbol("loop"),
+    t.vector([binding, initValue]),
+    t.list([t.symbol("when"), t.list([t.symbol("<"), binding, testExpr]), 
+      t.list([t.symbol("do"), bodyExpr, 
+        t.list([t.symbol("if"), t.list([t.symbol("=", update.operator), t.symbol("++")]), 
+          t.list([t.symbol("recur"), t.list([t.symbol("inc"), binding])]),
+          t.list([t.symbol("recur"), t.list([t.symbol("+"), binding, t.NumericLiteral(1)])])
+        ])
+      ])
+    ])
+  ]);
+};
+
+// While文処理
+const WhileStatement = (next, ast, opts) => {
+  const { test, body } = ast;
+
+  const testExpr = next(test);
+  const bodyExpr = next(body);
+
+  return t.list([
+    t.symbol("while"),
+    testExpr,
+    t.list([
+      t.symbol("do"),
+      bodyExpr
+    ])
+  ]);
+};
+
+
+/*
+const UpdateExpression = (next, ast, opts) => {
+  const { operator, argument, prefix } = ast;
+  if (operator !== "++" && operator !== "--") {
+    throw new Error(`UpdateExpression: Unsupported operator "${operator}"`);
+  }
+
+  const updatedArgument = next(argument);
+
+  if (prefix) {
+    return t.list([t.symbol(operator === "++" ? "+" : "-"), updatedArgument, t.NumericLiteral(1)]);
+  } else {
+    return t.list([
+      t.symbol("let"),
+      t.vector([t.symbol("old-value")]),
+      updatedArgument,
+      t.list([
+        t.symbol("do"),
+        t.list([
+          t.symbol("set!"),
+          updatedArgument,
+          t.list([t.symbol(operator === "++" ? "+" : "-"), updatedArgument, t.NumericLiteral(1)]),
+        ]),
+        t.symbol("old-value"),
+      ]),
+    ]);
+  }
+};
+*/
+const UpdateExpression = (next, ast, opts) => {
+  const { operator, argument, prefix } = ast;
+  if (operator !== "++" && operator !== "--") {
+    throw new Error(`UpdateExpression: Unsupported operator "${operator}"`);
+  }
+
+  const updatedArgument = next(argument);
+
+  if (prefix) {
+    return t.list([t.symbol("swap!"), updatedArgument, t.symbol(operator === "++" ? "inc" : "dec")]);
+  } else {
+    return t.list([
+      t.symbol("let"),
+      t.vector([t.symbol("old-value")]),
+      t.list([t.symbol("deref"), updatedArgument]),
+      t.list([
+        t.symbol("do"),
+        t.list([
+          t.symbol("swap!"),
+          updatedArgument,
+          t.symbol(operator === "++" ? "inc" : "dec"),
+        ]),
+        t.symbol("old-value"),
+      ]),
+    ]);
+  }
+};
+
 
 const transforms = {
   File,
@@ -557,6 +781,7 @@ const transforms = {
   ObjectExpression,
   ObjectProperty,
   ThisExpression,
+  AssignmentPattern, // 追加
   AssignmentExpression,
   NewExpression,
   ObjectMethod,
@@ -582,8 +807,15 @@ const transforms = {
   SpreadElement,
   SpreadProperty,
   ArrayPattern,
-  ForOfStatement,
-
+  //ForOfStatement,
+  AsyncFunctionDeclaration,
+  AsyncFunctionExpression,
+  AsyncArrowFunctionExpression,
+  AwaitExpression,
+  UpdateExpression,
+  ContinueStatement,
+  ForStatement,
+  WhileStatement,
   JSXExpressionContainer,
   JSXElement,
   JSXAttribute,

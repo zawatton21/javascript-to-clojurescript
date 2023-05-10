@@ -109,6 +109,29 @@ function alterNestedThisExpression(name, node) {
   }
 }
 
+const getBinaryOp = (op) => {
+  const opMap = {
+    "+": "+",
+    "-": "-",
+    "*": "*",
+    "/": "/",
+    "%": "mod",
+    "==": "=",
+    "===": "=",
+    "!=": "not=",
+    "!==": "not=",
+    "<": "<",
+    "<=": "<=",
+    ">": ">",
+    ">=": ">=",
+    "&&": "and",
+    "||": "or",
+    "^": "bit-xor", // 追加: XOR演算子のサポート
+    "&": "bit-and", // 追加: AND演算子のサポート
+  };
+  return opMap[op];
+};
+
 module.exports = {
   isComponentElement,
   flatMap,
@@ -119,5 +142,6 @@ module.exports = {
   maybeThreadMemberSyntax,
   isNestedThisExpression,
   alterNestedThisExpression,
+  getBinaryOp,
   globalObj
 };
